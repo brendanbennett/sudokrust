@@ -8,6 +8,7 @@ type ValuesVec = Vec<(Coords, Digit)>;
 enum SudokuError {
     RuntimeError(String),
     ParseError(String),
+    InvalidState,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -321,7 +322,7 @@ impl Board {
         if was_changed {
             self.remove_visible_candidates();
             if !self.verify() {
-                return Err(SudokuError::RuntimeError("Sudoku is in invalid state!".to_string()))
+                return Err(SudokuError::InvalidState)
             }
         }
         Ok(was_changed)
@@ -350,6 +351,18 @@ impl Board {
             return false
         }
         true
+    }
+
+    fn is_complete(&self) -> Result<bool, SudokuError> {
+        if !self.verify() {
+            return Err(SudokuError::InvalidState);
+        }
+        for i in 0..81 {
+            if let Square::Candidate(_) = self.get_square_by_coords(Coords::from_flat(i as u8)) {
+                return Ok(false)
+            }
+        }
+        return Ok(true)
     }
 
     fn show_coords_on_board(coords_list: Vec<Coords>) -> String {
@@ -472,6 +485,10 @@ fn main() {
     println!("{board}");
 
     loop {
+        if board.is_complete().unwrap() {
+            println!("Solved.");
+            break;
+        }
         let mut was_changed = false;
         was_changed |= board.fill_hidden_singles().unwrap();
         println!("{board}");
