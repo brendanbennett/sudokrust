@@ -2,7 +2,7 @@ use core::fmt;
 use std::{collections::HashSet, default, hash::Hash, iter::Chain, str::FromStr, vec};
 
 type Digit = u8;
-type ValuesVec = Vec<(Coords, Digit)>;
+type ValuesVec = Vec<(Coords, Square)>;
 
 #[derive(Debug)]
 enum SudokuError {
@@ -232,13 +232,11 @@ impl Board {
         &mut self.0[coords.flat() as usize]
     }
 
-    fn set_square(&mut self, coords: Coords, value: Digit) -> bool {
-        if let Square::Value(check_val) = self.0[coords.flat() as usize] {
-            if check_val == value {
-                return false
-            }
+    fn set_square(&mut self, coords: Coords, new_value: Square) -> bool {
+        if new_value == self.0[coords.flat() as usize] {
+            return false
         }
-        self.0[coords.flat() as usize] = Square::Value(value);
+        self.0[coords.flat() as usize] = new_value;
         true
     }
 
@@ -277,7 +275,7 @@ impl Board {
                 }
             }
             if occurances == 1 {
-                singles.push((coords_buffer[0].clone(), d))
+                singles.push((coords_buffer[0].clone(), Square::Value(d)))
             }
         }
         // println!("{:?}", singles);
@@ -300,7 +298,8 @@ impl Board {
                 Square::Value(_) => (),
                 Square::Candidate(candidates) => {
                     if candidates.len() == 1 {
-                        singles.push((Coords::from_flat(i as u8), *candidates.into_iter().next().unwrap()))
+                        let digit = *candidates.into_iter().next().unwrap();
+                        singles.push((Coords::from_flat(i as u8), Square::Value(digit)));
                     }
                 }
             }
