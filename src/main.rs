@@ -1,8 +1,11 @@
 use core::fmt;
-use std::{collections::HashSet, default, hash::Hash, iter::Chain, str::FromStr, vec};
+use std::{collections::{HashMap, HashSet}, default, hash::Hash, iter::Chain, str::FromStr, vec};
+use itertools::Itertools;
 
 type Digit = u8;
 type ValuesVec = Vec<(Coords, Square)>;
+
+const DIGITS: [Digit; 9] = [1,2,3,4,5,6,7,8,9];
 
 #[derive(Debug)]
 enum SudokuError {
@@ -224,15 +227,15 @@ impl Board {
         neighbours
     }
 
-    fn get_square_by_coords(&self, coords: Coords) -> &Square {
+    fn get_square_by_coords(&self, coords: &Coords) -> &Square {
         &self.0[coords.flat() as usize]
     }
 
-    fn get_mut_square_by_coords(&mut self, coords: Coords) -> &mut Square {
+    fn get_mut_square_by_coords(&mut self, coords: &Coords) -> &mut Square {
         &mut self.0[coords.flat() as usize]
     }
 
-    fn set_square(&mut self, coords: Coords, new_value: Square) -> bool {
+    fn set_square(&mut self, coords: &Coords, new_value: Square) -> bool {
         if new_value == self.0[coords.flat() as usize] {
             return false
         }
@@ -246,18 +249,18 @@ impl Board {
                 let coords = Coords::from_flat(i as u8);
                 let neighbours = Self::get_neighbours(coords);
                 for neighbour in neighbours {
-                    self.get_mut_square_by_coords(neighbour).remove_candidate(value);
+                    self.get_mut_square_by_coords(&neighbour).remove_candidate(value);
                 }
             }
         }
     }
     
-    fn find_hidden_singles_in_coords_list(&self, coords_vec: Vec<Coords>) -> ValuesVec {
+    fn find_hidden_singles_in_coords_list(&self, coords_vec: &Vec<Coords>) -> ValuesVec {
         // println!("{:?}", coords_vec);
         let mut squares: Vec<&Square> = Vec::new();
         let mut singles: ValuesVec = Vec::new();
 
-        for coords in coords_vec.clone() {
+        for coords in coords_vec {
             squares.push(self.get_square_by_coords(coords))
         }
 
@@ -285,7 +288,7 @@ impl Board {
     fn fill_hidden_singles(&mut self) -> Result<bool, SudokuError> {
         let mut singles: ValuesVec = Vec::new();
         for neighbourhood in self.clone().into_iter_full() {
-            singles.extend(self.find_hidden_singles_in_coords_list(neighbourhood));
+            singles.extend(self.find_hidden_singles_in_coords_list(&neighbourhood));
         }
         
         self.fill_values_and_update_candidates(singles)
@@ -311,11 +314,69 @@ impl Board {
         self.fill_values_and_update_candidates(self.find_naked_singles())
     }
 
+    fn is_digit_set_by_coords(&self, digit: Digit, coords_list: &Vec<Coords>) -> bool {
+        for coords in coords_list {
+            let square = self.get_square_by_coords(coords);
+            if let Square::Value(set_digit) = square {
+                if *set_digit == digit {
+                    return true
+                }
+            }
+        }
+        false
+    }
+
+    fn is_candidate_set_at_coords(&self, digit: Digit, coords: &Coords) -> bool {
+        let square = self.get_square_by_coords(coords);
+        square.has_candidate(digit)
+    }
+
+    fn get_candidate_one_hot(&self, digit: Digit, coords_list: &Vec<Coords>) -> Vec<bool> {
+        let mut one_hot: Vec<bool> = Vec::with_capacity(coords_list.len());
+        for coords in coords_list {
+            one_hot.push(self.is_candidate_set_at_coords(digit, coords));
+        }
+        one_hot
+    }
+
+    fn find_hidden_pairs(&self, neighbourhood: &Vec<Coords>) -> Vec<Digit> {
+        let mut one_hots: HashMap<Digit, Vec<bool>> = HashMap::new();
+        let mut hidden_digits: Vec<Digit> = Vec::new();
+
+        for digit in DIGITS {
+            one_hots.insert(digit, self.get_candidate_one_hot(digit, neighbourhood));
+        }
+
+        let mut paired_digits: Vec<Digit> = Vec::new();
+        for (digit, one_hot) in &one_hots {
+            let count = one_hot.into_iter().filter(|b| **b).count();
+            if count == 2 {
+                paired_digits.push(*digit)
+            }
+        }
+        
+        if paired_digits.len() >= 2 {
+            let combinations = paired_digits.iter().combinations(2);
+            for combination in combinations {
+                let reduced_one_hots = one_hots.clone().into_iter()
+                .filter(|(digit, _)| combination.contains(&digit))
+                .map(|(_,a)| a.clone())
+                .reduce(|oh1,oh2| (oh1.into_iter().zip(oh2).map(|(b1, b2)| b1 && b2)).collect())
+                .unwrap();
+                
+                if reduced_one_hots.into_iter().filter(|b| *b).count() == 2 {
+                    hidden_digits = combination.into_iter().map(|a| *a).collect();
+                }
+            }
+        }
+        hidden_digits
+    }
+
     fn fill_values_and_update_candidates(&mut self, values: ValuesVec) -> Result<bool, SudokuError> {
         let mut was_changed = false;
         
         for (coords, value) in values {
-            was_changed |= self.set_square(coords, value);
+            was_changed |= self.set_square(&coords, value);
         }
         
         if was_changed {
@@ -329,14 +390,14 @@ impl Board {
 
     fn verify(&self) -> bool {
         for neighbourhood in self.clone().into_iter_full() {
-            if !self.verify_single_neighbourhood(neighbourhood) {
+            if !self.verify_single_neighbourhood(&neighbourhood) {
                 return false
             }
         }
         true
     }
 
-    fn verify_single_neighbourhood(&self, coords_vec: Vec<Coords>) -> bool {
+    fn verify_single_neighbourhood(&self, coords_vec: &Vec<Coords>) -> bool {
         let mut values: Vec<Digit> = Vec::new();
         for coords in coords_vec {
             if let Square::Value(value) = self.get_square_by_coords(coords) {
@@ -357,11 +418,33 @@ impl Board {
             return Err(SudokuError::InvalidState);
         }
         for i in 0..81 {
-            if let Square::Candidate(_) = self.get_square_by_coords(Coords::from_flat(i as u8)) {
+            if let Square::Candidate(_) = self.get_square_by_coords(&Coords::from_flat(i as u8)) {
                 return Ok(false)
             }
         }
         return Ok(true)
+    }
+
+    pub fn solve(&mut self) {
+        println!("{self}");
+        self.remove_visible_candidates();
+        println!("{self}");
+
+        loop {
+            if self.is_complete().unwrap() {
+                println!("Solved.");
+                break;
+            }
+            let mut was_changed = false;
+            was_changed |= self.fill_hidden_singles().unwrap();
+            println!("{self}");
+            was_changed |= self.fill_naked_singles().unwrap();
+            println!("{self}");
+            
+            if !was_changed {
+                break;
+            }
+        }
     }
 
     fn show_coords_on_board(coords_list: Vec<Coords>) -> String {
@@ -479,23 +562,5 @@ impl Iterator for BoardFullIterator {
 }
 fn main() {
     let mut board = Board::from_str("000090500200010060050002004123000090060000000408501630005903000000000000600700008").unwrap();
-    println!("{board}");
-    board.remove_visible_candidates();
-    println!("{board}");
-
-    loop {
-        if board.is_complete().unwrap() {
-            println!("Solved.");
-            break;
-        }
-        let mut was_changed = false;
-        was_changed |= board.fill_hidden_singles().unwrap();
-        println!("{board}");
-        was_changed |= board.fill_naked_singles().unwrap();
-        println!("{board}");
-        
-        if !was_changed {
-            break;
-        }
-    }
+    board.solve();
 }
